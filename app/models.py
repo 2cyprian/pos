@@ -13,6 +13,13 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
 
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String, primary_key=True, index=True) # e.g., "price_bw_a4", "tax_rate"
+    value = Column(String) # e.g., "0.50", "18.0"
+    description = Column(String) # "Price for B&W A4 Print"
 # ────────────────────────────────────────────────────────────────────────────
 # MODEL 1: PRINT JOB - Customer's Document
 # ────────────────────────────────────────────────────────────────────────────
@@ -128,6 +135,18 @@ class RawMaterial(Base):
     # Current quantity/level (sheets, percentage, bottles, etc.)
     current_level = Column(Float, default=0)
 
+# Links a Service (like "Color Print") to Raw Materials
+class ProductionRecipe(Base):
+    __tablename__ = "production_recipes"
+    
+    id = Column(Integer, primary_key=True)
+    service_type = Column(String) # e.g., "PRINT_BW_A4", "PRINT_COLOR_A4", "BINDING_SPIRAL"
+    
+    # Material to Deduct
+    raw_material_id = Column(Integer, ForeignKey("raw_materials.id"))
+    quantity_required = Column(Float) # e.g., 1.0 (Sheet) or 0.05 (Ink)
+    
+    material = relationship("RawMaterial")
 
 # ────────────────────────────────────────────────────────────────────────────
 # MODEL 4: PRINTER - Hardware Devices
@@ -159,3 +178,35 @@ class Printer(Base):
     # Total pages printed (from printer's hardware counter)
     # Updated via SNMP queries
     total_page_counter = Column(Integer, default=0)
+
+
+# 5. SALES ORDER (The Receipt)
+class Order(Base):
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    total_amount = Column(Float, default=0.0)
+    payment_method = Column(String, default="CASH") # CASH, M-PESA
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationship to items
+    items = relationship("OrderItem", back_populates="order")
+
+# 6. ORDER ITEMS (Details of what was sold)
+class OrderItem(Base):
+    __tablename__ = "order_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"))
+    
+    # What did they buy?
+    product_name = Column(String) # Snapshot of name at time of sale
+    quantity = Column(Integer)
+    unit_price = Column(Float) # Snapshot of price
+    
+    # Type: "RETAIL" (Pen) or "SERVICE" (Print Job)
+    item_type = Column(String) 
+    
+    order = relationship("Order", back_populates="items")
+
+   
