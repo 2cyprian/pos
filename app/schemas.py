@@ -65,10 +65,19 @@ class CheckoutRequest(BaseModel):
 class UserBase(BaseModel):
     username: str
     email: str
+    phone: Optional[str] = None
     role: str = "STAFF"  # OWNER or STAFF
 
 class UserCreate(UserBase):
     password: str
+    # Optional branch assignment at creation
+    branch_id: Optional[int] = None
+
+class UserUpdate(BaseModel):
+    # Fields allowed to update for a staff member
+    branch_id: Optional[int] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
 
 class OwnerRegister(BaseModel):
     """Schema for owner registration - role is auto-set"""
@@ -79,6 +88,7 @@ class OwnerRegister(BaseModel):
 class UserResponse(UserBase):
     id: int
     is_active: bool
+    phone: Optional[str] = None
     branch_id: Optional[int] = None
     created_at: datetime
     class Config:

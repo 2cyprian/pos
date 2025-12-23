@@ -301,6 +301,9 @@ class User(Base):
     # Email
     email = Column(String, unique=True, index=True)
     
+    # Phone number (optional)
+    phone = Column(String, nullable=True)
+    
     # Hashed password (use bcrypt in production)
     password_hash = Column(String)
     

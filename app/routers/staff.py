@@ -85,6 +85,42 @@ async def list_branches(
     return branches
 
 
+@router.delete("/branches/{branch_id}/", tags=["Owner Management"])
+async def delete_branch(
+    branch_id: int,
+    owner: models.User = Depends(require_owner),
+    db: Session = Depends(get_db)
+):
+    """
+    OWNER ONLY: Delete a branch
+    - Verifies the branch belongs to the owner
+    - Automatically reassigns all staff in the branch to unassigned (branch_id = NULL)
+    - Deletes the branch record
+    """
+    # Get the branch
+    branch = db.query(models.Branch).filter(
+        models.Branch.id == branch_id,
+        models.Branch.owner_id == owner.id
+    ).first()
+    
+    if not branch:
+        raise HTTPException(
+            status_code=404,
+            detail="Branch not found or you don't have permission to delete it"
+        )
+    
+    # Reassign all staff in this branch to unassigned
+    db.query(models.User).filter(models.User.branch_id == branch_id).update(
+        {models.User.branch_id: None}
+    )
+    
+    # Delete the branch
+    db.delete(branch)
+    db.commit()
+    
+    return {"message": f"Branch '{branch.name}' has been deleted successfully. All staff have been unassigned."}
+
+
 @router.post("/staff/", response_model=schemas.UserResponse, tags=["Owner Management"])
 async def create_staff(
     staff: schemas.UserCreate,
@@ -106,14 +142,70 @@ async def create_staff(
     new_staff = models.User(
         username=staff.username,
         email=staff.email,
+        phone=staff.phone,
         password_hash=password_hash,
         role="STAFF"
     )
+    # If branch_id provided, validate ownership and assign
+    if staff.branch_id is not None:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == staff.branch_id,
+            models.Branch.owner_id == owner.id
+        ).first()
+        if not branch:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only assign staff to your own branches"
+            )
+        new_staff.branch_id = staff.branch_id
     db.add(new_staff)
     db.commit()
     db.refresh(new_staff)
     
     return new_staff
+
+
+@router.put("/staff/{staff_id}/", response_model=schemas.UserResponse, tags=["Owner Management"])
+async def update_staff(
+    staff_id: int,
+    payload: schemas.UserUpdate,
+    owner: models.User = Depends(require_owner),
+    db: Session = Depends(get_db)
+):
+    """
+    OWNER ONLY: Update a staff member's details.
+    Supports updating branch assignment and contact info.
+    """
+    staff = db.query(models.User).filter(models.User.id == staff_id, models.User.role == "STAFF").first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff not found")
+
+    # Update branch assignment if provided (validate ownership)
+    if payload.branch_id is not None:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == payload.branch_id,
+            models.Branch.owner_id == owner.id
+        ).first()
+        if not branch:
+            raise HTTPException(status_code=403, detail="You can only assign staff to your own branches")
+        staff.branch_id = payload.branch_id
+
+    # Optional contact updates
+    if payload.phone is not None:
+        staff.phone = payload.phone
+    if payload.email is not None:
+        # Ensure email uniqueness
+        existing_email = db.query(models.User).filter(
+            models.User.email == payload.email,
+            models.User.id != staff_id
+        ).first()
+        if existing_email:
+            raise HTTPException(status_code=400, detail="Email already in use")
+        staff.email = payload.email
+
+    db.commit()
+    db.refresh(staff)
+    return staff
 
 
 @router.put("/staff/{staff_id}/password", tags=["Owner Management"])
@@ -177,22 +269,47 @@ async def assign_staff_to_branch(
 @router.get("/staff/", response_model=list[schemas.UserResponse], tags=["Owner Management"])
 async def list_staff(
     owner: models.User = Depends(require_owner),
+    branch_id: int | None = None,
     db: Session = Depends(get_db)
 ):
     """
     OWNER ONLY: List staff members assigned to this owner's branches
+    
+    Query Parameters:
+    - branch_id (optional): Filter staff by specific branch. If not provided, returns all staff.
     """
+    from sqlalchemy import or_
+    
     # Get all branch IDs owned by this owner
     owner_branch_ids = db.query(models.Branch.id).filter(
         models.Branch.owner_id == owner.id
     ).all()
     branch_ids = [b[0] for b in owner_branch_ids]
     
-    # Get staff assigned to these branches
-    staff_list = db.query(models.User).filter(
+    # Build filter conditions
+    filters = [
         models.User.role == "STAFF",
-        models.User.branch_id.in_(branch_ids)
-    ).all()
+        or_(
+            models.User.branch_id.in_(branch_ids),
+            models.User.branch_id.is_(None)
+        )
+    ]
+    
+    # If branch_id filter is provided, ensure it belongs to this owner
+    if branch_id is not None:
+        if branch_id not in branch_ids:
+            raise HTTPException(
+                status_code=403, 
+                detail="You can only view staff in your own branches"
+            )
+        # Filter by the specific branch (only assigned staff, exclude unassigned)
+        filters = [
+            models.User.role == "STAFF",
+            models.User.branch_id == branch_id
+        ]
+    
+    # Get staff
+    staff_list = db.query(models.User).filter(*filters).all()
     
     return staff_list
 
@@ -241,6 +358,49 @@ async def grant_permission(
     db.commit()
     
     return {"message": f"Permission '{permission_name}' granted to {staff.username}"}
+
+
+@router.delete("/staff/{staff_id}/", tags=["Owner Management"])
+async def delete_staff(
+    staff_id: int,
+    owner: models.User = Depends(require_owner),
+    db: Session = Depends(get_db)
+):
+    """
+    OWNER ONLY: Delete a staff member
+    - Verifies the staff member belongs to one of the owner's branches
+    - Deletes all associated permissions
+    - Deletes the staff member record
+    """
+    # Get the staff member
+    staff = db.query(models.User).filter(
+        models.User.id == staff_id,
+        models.User.role == "STAFF"
+    ).first()
+    
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+    
+    # If staff is assigned to a branch, verify ownership
+    if staff.branch_id:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == staff.branch_id,
+            models.Branch.owner_id == owner.id
+        ).first()
+        if not branch:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only delete staff in your own branches"
+            )
+    
+    # Delete associated permissions
+    db.query(models.Permission).filter(models.Permission.user_id == staff_id).delete()
+    
+    # Delete the staff member
+    db.delete(staff)
+    db.commit()
+    
+    return {"message": f"Staff member '{staff.username}' has been deleted successfully"}
 
 
 # ────────────────────────────────────────────────────────────────────────────
