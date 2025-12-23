@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional
+from datetime import datetime
 
 
 
@@ -59,3 +60,61 @@ class CartItem(BaseModel):
 class CheckoutRequest(BaseModel):
     payment_method: str = "CASH"
     items: List[CartItem]
+
+# --- USER / AUTHENTICATION SCHEMAS ---
+class UserBase(BaseModel):
+    username: str
+    email: str
+    role: str = "STAFF"  # OWNER or STAFF
+
+class UserCreate(UserBase):
+    password: str
+
+class OwnerRegister(BaseModel):
+    """Schema for owner registration - role is auto-set"""
+    username: str
+    email: str
+    password: str
+
+class UserResponse(UserBase):
+    id: int
+    is_active: bool
+    branch_id: Optional[int] = None
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class PasswordUpdate(BaseModel):
+    new_password: str
+
+# --- BRANCH SCHEMAS ---
+class BranchBase(BaseModel):
+    name: str
+    location: str
+    phone: Optional[str] = None
+
+class BranchCreate(BranchBase):
+    pass
+
+class BranchResponse(BranchBase):
+    id: int
+    owner_id: int
+    is_active: bool
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+# --- PERMISSION SCHEMAS ---
+class PermissionBase(BaseModel):
+    permission_name: str
+
+class PermissionResponse(PermissionBase):
+    id: int
+    user_id: int
+    granted_at: datetime
+    class Config:
+        from_attributes = True

@@ -11,12 +11,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app import models
 from app.database import engine
-from app.routers import upload,staff
-
-from app.services.snmp_svc import fetch_printer_counter
-from app.database import SessionLocal
-import asyncio
-from app.routers import upload, staff, inventory, pos,admin
+from app.routers import upload, staff, inventory, pos, admin, auth, dashboard
+from fastapi.staticfiles import StaticFiles
+import os
 
 # ────────────────────────────────────────────────────────────────────────────
 # STEP 1: CREATE ALL DATABASE TABLES
@@ -41,6 +38,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+# ensure static exists
+os.makedirs("static/uploads", exist_ok=True)
+
+# mount static directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
 # ────────────────────────────────────────────────────────────────────────────
 # STEP 3: ADD MIDDLEWARE (OPTIONAL BUT GOOD PRACTICE)
 # ────────────────────────────────────────────────────────────────────────────
@@ -68,6 +71,8 @@ app.add_middleware(
 # 
 # prefix="/api/v1" means all routes will start with /api/v1/
 # So @router.post("/upload/") becomes POST /api/v1/upload/
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(upload.router, prefix="/api/v1", tags=["Customer Upload"])
 app.include_router(staff.router,prefix="/api/v1",tags=["staff"])
 app.include_router(inventory.router, prefix="/api/v1", tags=["Inventory"]) # New
@@ -76,45 +81,11 @@ app.include_router(pos.router, prefix="/api/v1", tags=["POS"]) # New
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin Config"])
 
 
-
-# --- BACKGROUND TASK ---
-async def run_snmp_watchdog():
-    """
-    Runs every 60 seconds. Checks printer counters.
-    Fetches printer IPs dynamically from the database.
-    """
-    while True:
-        db = SessionLocal() # Get a database session
-        try:
-            printers = db.query(models.Printer).all() # Fetch all registered printers
-
-            for printer in printers:
-                print(f" [WATCHDOG] Checking printer: {printer.name} ({printer.ip_address})")
-                count = await fetch_printer_counter(printer.ip_address)
-                
-                if count is not None: # Check for non-None count (successful fetch)
-                    if count > printer.total_page_counter: # Only update if counter increased
-                        printer.total_page_counter = count
-                        db.add(printer)
-                        db.commit()
-                        db.refresh(printer)
-                        print(f" [WATCHDOG] Printer {printer.name} Total Count Updated: {count}")
-                    else:
-                         print(f" [WATCHDOG] Printer {printer.name} Total Count (no change): {count}")
-                else:
-                    print(f" [WATCHDOG] Failed to fetch counter for {printer.name} ({printer.ip_address})")
-        except Exception as e:
-            print(f" [WATCHDOG ERROR] {e}")
-        finally:
-            db.close() # Always close the session
-        
-        await asyncio.sleep(60) # Wait 60 seconds
-
-
 @app.on_event("startup")
 async def startup_event():
-    # Start the watchdog in the background
-    asyncio.create_task(run_snmp_watchdog())
+    # Server starts without starting the watchdog
+    # User must manually start it via the endpoint
+    print(" [STARTUP] Server initialized. Printer watchdog is INACTIVE. Use POST /api/v1/admin/printer/control {\"action\": \"start\"} to activate.")
 
 # ────────────────────────────────────────────────────────────────────────────
 # STEP 5: DEFINE ENDPOINTS

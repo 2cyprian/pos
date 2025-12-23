@@ -9,3 +9,5 @@ python-multipart
 pysnmp
 pillow
 pypdf
+PyJWT
+passlib

@@ -178,6 +178,44 @@ class Printer(Base):
     # Total pages printed (from printer's hardware counter)
     # Updated via SNMP queries
     total_page_counter = Column(Integer, default=0)
+    
+    # Relationship to logs
+    logs = relationship("PrinterLog", back_populates="printer")
+
+
+# MODEL 4B: PRINTER LOG - Printer Activity History
+class PrinterLog(Base):
+    """
+    Tracks printer activity and page counter changes over time.
+    Stores historical data when printer watchdog updates counters.
+    
+    Example records:
+    ┌────────────┬──────────┬─────────────────────┐
+    │ printer_id │ pages    │ timestamp           │
+    ├────────────┼──────────┼─────────────────────┤
+    │ 1          │ 87432    │ 2025-12-21 10:00:00 │
+    │ 1          │ 87445    │ 2025-12-21 11:00:00 │
+    │ 1          │ 87458    │ 2025-12-21 12:00:00 │
+    └────────────┴──────────┴─────────────────────┘
+    """
+    __tablename__ = "printer_logs"
+    
+    id = Column(Integer, primary_key=True)
+    
+    # Reference to the printer
+    printer_id = Column(Integer, ForeignKey("printers.id"))
+    
+    # Page counter value at this point in time
+    page_count = Column(Integer)
+    
+    # When this log entry was recorded
+    recorded_at = Column(DateTime, default=datetime.now)
+    
+    # Additional info: pages printed since last check, status, etc.
+    notes = Column(String, nullable=True)
+    
+    # Relationship back to printer
+    printer = relationship("Printer", back_populates="logs")
 
 
 # 5. SALES ORDER (The Receipt)
@@ -210,3 +248,102 @@ class OrderItem(Base):
     order = relationship("Order", back_populates="items")
 
    
+# ────────────────────────────────────────────────────────────────────────────
+# MODEL 7: BRANCH - Business Locations
+# ────────────────────────────────────────────────────────────────────────────
+class Branch(Base):
+    """
+    Represents a branch or location of the business.
+    Owner can create multiple branches, each managed by staff.
+    """
+    __tablename__ = "branches"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Branch name (e.g., "Downtown Store", "Mall Outlet")
+    name = Column(String, index=True)
+    
+    # Location address
+    location = Column(String)
+    
+    # Contact phone
+    phone = Column(String, nullable=True)
+    
+    # Owner ID (who created this branch)
+    owner_id = Column(Integer, ForeignKey("users.id"))
+    
+    # When branch was created
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Active or inactive
+    is_active = Column(Boolean, default=True)
+    
+    # Relationship to staff assigned to this branch
+    staff = relationship("User", back_populates="branch", foreign_keys="User.branch_id")
+    owner = relationship("User", back_populates="owned_branches", foreign_keys=[owner_id])
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# MODEL 8: USER / STAFF - Authentication & Roles
+# ────────────────────────────────────────────────────────────────────────────
+class User(Base):
+    """
+    Represents a staff member or owner.
+    Roles: "OWNER" or "STAFF"
+    """
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Username for login
+    username = Column(String, unique=True, index=True)
+    
+    # Email
+    email = Column(String, unique=True, index=True)
+    
+    # Hashed password (use bcrypt in production)
+    password_hash = Column(String)
+    
+    # Role: "OWNER" or "STAFF"
+    role = Column(String, default="STAFF")  # OWNER, STAFF
+    
+    # If STAFF, which branch are they assigned to?
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
+    
+    # Active or inactive
+    is_active = Column(Boolean, default=True)
+    
+    # When user was created
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Relationships
+    branch = relationship("Branch", back_populates="staff", foreign_keys=[branch_id])
+    owned_branches = relationship("Branch", back_populates="owner", foreign_keys="Branch.owner_id")
+    
+    # Each staff can have permissions
+    permissions = relationship("Permission", back_populates="user")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# MODEL 9: PERMISSION - Fine-grained access control
+# ────────────────────────────────────────────────────────────────────────────
+class Permission(Base):
+    """
+    Represents what actions a user can perform.
+    Example: can_create_product, can_view_reports, can_refund
+    """
+    __tablename__ = "permissions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # User who has this permission
+    user_id = Column(Integer, ForeignKey("users.id"))
+    
+    # Permission name (e.g., "view_reports", "create_product", "refund_order")
+    permission_name = Column(String, index=True)
+    
+    # When permission was granted
+    granted_at = Column(DateTime, default=datetime.now)
+    
+    # Relationship
+    user = relationship("User", back_populates="permissions")
